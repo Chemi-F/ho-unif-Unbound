@@ -1,4 +1,4 @@
-module AlpabeticOriginal where
+module Alpabetic where
 
 import Data.Char (isDigit, isLetter)
 import Text.Parsec

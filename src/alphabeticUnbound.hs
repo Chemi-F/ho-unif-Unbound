@@ -6,7 +6,7 @@
            , UndecidableInstances
   #-}
 
-module AlpabeticUIO where
+module AlpabeticUnbound where
 
 import Unbound.LocallyNameless
 
