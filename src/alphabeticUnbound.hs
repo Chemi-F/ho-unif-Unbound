@@ -234,7 +234,7 @@ unif s t =
         t' = v2f t
     in unif' [] (s', t')
     where
-        v2f t = let fvs = fv t :: [ID]
+        v2f t = let fvs = fv t :: [ID] -- V ID (free variable) -> F ID
                 in foldl (\t x -> subst x (F x) t) t fvs
         unif' th (s, t) = do
             prth <- prTheta th
