@@ -17,4 +17,5 @@ Nipkow が ML で実装したコードを Haskell に書き直したコード。
 stack install
 cd src
 stack ghci alphabetic.hs
+stack ghci alphabeticUnbound.hs
 ```
