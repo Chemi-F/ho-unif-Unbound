@@ -1,5 +1,7 @@
 module Alpabetic where
 
+import Control.Monad (foldM)
+
 import Data.Char (isDigit, isLetter)
 import Text.Parsec
 import Text.Parsec.String (Parser)
@@ -13,7 +15,7 @@ type ID = String
 data Term = V ID -- free variable
           | B ID -- bound variable
           | C ID -- constant
-          | App Term Term -- application
+          | App Term [Term] -- application
           | Abs ID Term -- abstraction
     deriving (Show, Eq)
 
@@ -23,33 +25,13 @@ type Theta = [(ID, Term)]
 -- Nipkow's algorithm
 -- (*** Basic Library ***)
 
--- foldl
-myfoldl :: ((a, b) -> a) -> (a, [b]) -> a
-myfoldl f (a, (x:xs)) = myfoldl f ((f (a, x)), xs)
-myfoldl _ (a, [])     = a
-
--- foldr
-myfoldr :: ((a, b) -> b) -> ([a], b) -> b
-myfoldr f ((x:xs), a) = f (x, (myfoldr f (xs, a)))
-myfoldr _ ([], a)     = a
-
--- lookup
-assoc :: Eq t => t -> [(t, a)] -> Maybe a
-assoc x ((y, t):ps) = if x == y then Just t else assoc x ps
-assoc _ []          = Nothing
-
--- elem
-mem :: Eq t => t -> [t] -> Bool
-x `mem` (y:ys) = x == y || x `mem` ys
-x `mem` []     = False
-
 subset :: Eq a => [a] -> [a] -> Bool
-(x:xs) `subset` ys = (x `mem` ys) && (xs `subset` ys)
+(x:xs) `subset` ys = (elem x ys) && (xs `subset` ys)
 []     `subset` ys = True
 
 -- intersection
 cap :: Eq a => [a] -> [a] -> [a]
-(x:xs) `cap` ys = if x `mem` ys then x:(xs `cap` ys)
+(x:xs) `cap` ys = if elem x ys then x:(xs `cap` ys)
                   else xs `cap` ys
 []     `cap` _  = []
 
@@ -65,64 +47,60 @@ newB = "NEW BNAME"
 newV :: Term
 newV = V "NEW VNAME"
 
-b1 :: Term -> ID
-b1 (B s) = s
+term2ID :: Term -> ID
+term2ID (B s) = s
 
--- (...(a.s1)...).sn -> (a, [s1,...,sn])
 strip :: Term -> (Term, [Term])
-strip t = strip' (t, [])
-    where
-        strip' (App s t, ts) = strip' (s, t:ts)
-        strip' p = p
+strip (App t ts) = (t, ts)
+strip t = (t, [])
 
--- abs
 -- make Lxs. t
-myabs :: ([Term], Term) -> Term
-myabs (xs, t) = myfoldr (\(t, x) -> Abs t x) (map b1 xs, t)
+makeAbs :: [Term] -> Term -> Term
+makeAbs xs t = foldr (\x t -> Abs x t) t (map term2ID xs)
 
 -- make Lxs. _F@ts
-hnf :: ([Term], Term, [Term]) -> Term
-hnf (xs, _F, ss) = myabs (xs, (myfoldl (\(f, s) -> App f s) (_F, ss)))
+hnf :: [Term] -> Term -> [Term] -> Term
+hnf xs _F [] = makeAbs xs _F
+hnf xs _F ts = makeAbs xs (App _F ts)
 
 
 -- (*** Substitutions ***)
 
 -- occur check
 occ :: ID -> Theta -> Term -> Bool
-occ _F _S t = occ' t
+occ _F th t = occ' t
     where
-        occ' (V _G)    = _F == _G || case assoc _G _S of
+        occ' (V _G)    = _F == _G || case lookup _G th of
                                          Just s  -> occ' s
                                          Nothing -> False
-        occ' (App s t) = occ' s || occ' t
+        occ' (App t ts) = occ' t || or (map occ' ts)
         occ' (Abs _ s) = occ' s
         occ' _         = False
 
--- subst y x t = t[x:=y]
+-- subst x y t = t[x:=y]
 subst :: ID -> ID -> Term -> Term
-subst y x t = sub t
+subst x y t = sub t
     where 
         sub (B z)       = if z == x then B y else B z
-        sub (App s1 s2) = App (sub s1) (sub s2)
+        sub (App s ss)  = App (sub s) (map sub ss)
         sub (Abs z s)   = if z == x then Abs z s else
                           if z /= y then Abs z (sub s) else
                           let z' = newB
-                          in Abs z' $ sub (subst z' z s)
+                          in Abs z' $ sub (subst z z' s)
         sub s           = s
 
--- reduction
+-- beta-reduction
 red :: Term -> [Term] -> Term
-red (Abs x s) (y:ys) = red (subst (b1 y) x s) ys
-red s (y:ys)         = red (App s y) ys
-red s []             = s
+red (Abs x s) (y:ys) = red (subst x (term2ID y) s) ys
+red s ys             = App s ys
 
 -- "lazy" form of substitution application
 devar :: Theta -> Term -> Term
-devar _S t =
+devar th t =
     case strip t of
-        ((V _F), ys) ->
-            case assoc _F _S of
-                Just t  -> devar _S (red t ys)
+        (V _F, ys) ->
+            case lookup _F th of
+                Just t  -> devar th (red t ys)
                 Nothing -> t
         _ -> t
 
@@ -130,71 +108,99 @@ devar _S t =
 -- (*** Unification ***)
 
 -- projection
-proj :: [ID] -> (Theta, Term) -> Theta
-proj _W (_S, s) =
-    case strip (devar _S s) of
-        (Abs x t, _) -> proj (x:_W) (_S, t)
-        (C _, ss)    -> myfoldl (proj _W) (_S, ss)
-        (B x, ss)    -> if x `mem` _W then myfoldl (proj _W) (_S, ss)
-                        else trace ("Fail") $ [("", V "")]
-        (V _F, ss)   ->
-            if (map b1 ss) `subset` _W then _S
-            else (_F, hnf (ss, newV, ss `cap` (map B _W))) : _S
-    where
-        prIDs [] = ""
-        prIDs (x:[]) = x
-        prIDs (x:xs) = x ++ ", " ++ prIDs xs
+proj :: [ID] -> Theta -> Term -> Either String Theta
+proj _W th s =
+    trace ("proj [" ++ prIDs _W ++ "] " ++ prTheta th ++ " " ++ prTerm s) $
 
+    case strip (devar th s) of
+        (Abs x t, _) -> proj (x:_W) th t
+        (C _, sm)    -> foldM (proj _W) th sm
+        (B x, sm)    -> if elem x _W then foldM (proj _W) th sm
+                        else Left "proj fail"
+        (V _F, ym)   ->
+            if (map term2ID ym) `subset` _W then return th
+            else
+                let _H = newV
+                    zn = ym `cap` (map B _W)
+                in return $ (_F, (hnf ym _H zn)) : th
 
-eqs :: Eq a => [a] -> [a] -> [a]
+eqs :: Eq a => [a] -> [a] -> Maybe [a]
 eqs (x:xs) (y:ys) =
-    if x == y then x:(eqs xs ys)
+    if x == y then (:) <$> return x <*> eqs xs ys
     else eqs xs ys
-eqs [] [] = []
-eqs _  _  = trace ("Fail") $ []
+eqs [] [] = return []
+eqs _  _  = Nothing
 
-flexflex1 :: (ID, [Term], [Term], Theta) -> Theta
-flexflex1 (_F, ym, zn, _S) =
-    if ym == zn then _S
-    else (_F, hnf (ym, newV, (eqs ym zn))) : _S
+flexflex1 :: ID -> [Term] -> [Term] -> Theta -> Either String Theta
+flexflex1 _F xm yn th =
+    trace ("(4) flexflex1 (" ++ _F ++ ", [" ++ prTerms xm ++
+        "], [" ++ prTerms yn ++ "], " ++ prTheta th ++ ")") $
 
-flexflex2 :: (ID, [Term], ID, [Term], Theta) -> Theta
-flexflex2 (_F, ym, _G, zn, _S) =
-    if ym `subset` zn then (_G, hnf (zn, V _F, ym)) : _S else
-    if zn `subset` ym then (_F, hnf (ym, V _G, zn)) : _S
-    else let _H = newV
-             xk = ym `cap` zn
-         in (_F, hnf (ym, _H, xk)) : (_G, hnf (zn, _H, xk)) : _S
+    if xm == yn then return th
+    else
+        case eqs xm yn of
+            Nothing -> Left "flexflex1 (eqs) fail"
+            Just zk -> 
+                let _H = newV
+                in return $ (_F, (hnf xm _H zk)) : th
 
-flexflex :: (ID, [Term], ID, [Term], Theta) -> Theta
-flexflex (_F, ym, _G, zn, _S) = if _F == _G then flexflex1 (_F, ym, zn, _S)
-                                else flexflex2 (_F, ym, _G, zn, _S)
+flexflex2 :: ID -> [Term] -> ID -> [Term] -> Theta -> Either String Theta
+flexflex2 _F xm _G yn th =
+    trace ("(5) flexflex2 (" ++ _F ++ ", [" ++ prTerms xm ++ "], " ++
+        _G ++ ", [" ++ prTerms yn ++ "], " ++ prTheta th ++ ")") $
 
-flexrigid :: (ID, [Term], Term, Theta) -> Theta
-flexrigid (_F, ym, t, _S) = 
-    if occ _F _S t then trace ("Fail") $ [("", V "")]
-    else proj (map b1 ym) (((_F, myabs (ym, t)) : _S), t)
+    if xm `subset` yn then return ((_G, (hnf yn (V _F) xm)) : th) else
+    if yn `subset` xm then return ((_F, (hnf xm (V _G) yn)) : th)
+    else 
+        let _H = newV
+            zk = xm `cap` yn
+        in return $ (_F, (hnf xm _H zk)) : (_G, (hnf yn _H zk)) : th
 
-unif :: (Theta, (Term, Term)) -> Theta
-unif (_S, (s, t)) =
-    case (devar _S s, devar _S t) of
-        (Abs x s, Abs y t) -> 
-            unif (_S, (s, if x == y then t else subst x y t)) 
-        (Abs x s, t) -> unif (_S, (s, App t (B x)))
-        (s, Abs x t) -> unif (_S, (App s (B x), t))
-        (s, t)       -> cases _S (s, t)
+flexflex :: ID -> [Term] -> ID -> [Term] -> Theta -> Either String Theta
+flexflex _F xm _G yn th = if _F == _G then flexflex1 _F xm yn th
+                          else flexflex2 _F xm _G yn th
 
+flexrigid :: ID -> [Term] -> Term -> Theta -> Either String Theta
+flexrigid _F xm t th = 
+    trace ("(3) flexrigid (" ++ _F ++ ", [" ++ prTerms xm ++
+        "], " ++ prTerm t ++ ", " ++ prTheta th ++ ")") $
+
+    if occ _F th t then Left "flexrigid (occ) fail"
+    else 
+        let lxt = makeAbs xm t
+        in proj (map term2ID xm) ((_F, lxt):th) t
+
+unif :: Term -> Term -> Either String Theta
+unif s t = unif' [] (s, t)
     where
-        cases _S (s, t) =
-            case (strip s, strip t) of
-                ((V _F, ym), (V _G, zn)) -> flexflex (_F, ym, _G, zn, _S)
-                ((V _F, ym), _)          -> flexrigid (_F, ym, t, _S)
-                (_, (V _F, ym))          -> flexrigid (_F, ym, s, _S)
-                ((a,sm), (b,tn))         -> rigidrigid (a, sm, b, tn, _S)
+        unif' th (s, t) =
+            trace ("<[" ++ prTerm s ++ " =? " ++ prTerm t ++
+                "], " ++ prTheta th ++ ">") $ 
 
-        rigidrigid (a, sm, b, tn, _S) =
-            if a /= b then trace ("Fail") $ [("", V "")]
-            else myfoldl unif (_S, zip sm tn)
+            case (devar th s, devar th t) of
+                (Abs x s', Abs y t') -> 
+                    unif' th (s', if x == y then t' else subst y x t')
+                (Abs x s', t') -> unif' th (s', addApp t' (B x))
+                (s', Abs x t') -> unif' th (addApp s' (B x), t')
+                (s', t')       -> cases th (s', t')
+                where
+                    addApp (App t xs) v = App t (xs ++ [v])
+                    addApp t v = App t [v]
+
+        cases th (s, t) = case (strip s, strip t) of
+            ((V _F, xm), (V _G, yn)) -> flexflex _F xm _G yn th
+            ((V _F, xm), _)          -> flexrigid _F xm t th
+            (_, (V _G, yn))          -> flexrigid _G yn s th
+            ((a, sm), (b, tn))       -> rigidrigid a sm b tn th
+
+        rigidrigid a sm b tn th =
+            if a /= b then Left "rigidrigid fail"
+            else
+                trace ("(2) rigidrigid (" ++  prTerm a ++ ", [" ++ prTerms sm ++
+                    "], " ++ prTerm b ++ ", [" ++ prTerms tn ++ "], " ++
+                    prTheta th ++ ")") $
+
+                foldM unif' th (zip sm tn)
 
 -- use parser
 unifP :: String -> String -> IO ()
@@ -204,7 +210,7 @@ unifP t1 t2 =
         Right t1' ->
             case parser t2 of
                 Left e2   -> putStrLn $ show e2
-                Right t2' -> putStrLn $ prTheta $ unif ([], (t1', t2'))
+                Right t2' -> putStrLn $ prUnif t1' t2'
 
 
 -- Print
@@ -213,9 +219,7 @@ prTerm :: Term -> String
 prTerm (V x) = x
 prTerm (B x) = "#" ++ x
 prTerm (C x) = "_" ++ x
-prTerm (App t1 t2) =
-    let (t, ts) = strip (App t1 t2)
-    in prTerm t ++ "(" ++ prTerms ts ++ ")"
+prTerm (App t ts) = prTerm t ++ "(" ++ prTerms ts ++ ")"
 prTerm (Abs x t) = prAbs [x] t
     where
         prAbs ids (Abs x t) = prAbs (ids ++ [x]) t
@@ -223,8 +227,8 @@ prTerm (Abs x t) = prAbs [x] t
 
 prIDs :: [ID] -> String
 prIDs [] = ""
-prIDs (x:[]) = show x
-prIDs (x:xs) = show x ++ "," ++ prIDs xs
+prIDs (x:[]) = x
+prIDs (x:xs) = x ++ "," ++ prIDs xs
 
 prTerms :: [Term] -> String
 prTerms [] = ""
@@ -241,15 +245,23 @@ prTheta t = "{" ++ prTheta' t
         prTheta' ((id, t):[]) = id ++ " -> " ++ prTerm t ++ "}"
         prTheta' ((id, t):ss) = id ++ " -> " ++ prTerm t ++ ", " ++ prTheta ss
 
--- Parser
+prUnif :: Term -> Term -> String
+prUnif t1 t2 = 
+    case unif t1 t2 of
+        Left e -> e
+        Right th' -> prTheta th'
+
+
+-- parser
 
 -- BNF
 -- expr = 'L' IDs '.' term | term
--- term = factor ( '@' factor )*
+-- term = factor '(' terms ')'
 -- factor = '(' expr ')' | literal
 -- literal = var | constant | bound
 --
 -- IDs = ID ( ',' IDs )*
+-- terms = expr ( ',' terms )*
 
 parser :: String -> Either ParseError Term
 parser s = parse expr "Term" s
@@ -273,12 +285,23 @@ pIDs = do
         <|> return [id]
 
 term :: Parser Term
-term = chainl1 factor pApp
+term = do
+    f <- factor 
+    do
+        spaces >> char '(' >> spaces
+        ts <- pTerms
+        spaces >> char ')' >> spaces
+        return (App f ts)
+        <|> return f
 
-pApp :: Parser (Term -> Term -> Term)
-pApp = do
-    spaces >> char '@' >> spaces
-    return App
+pTerms :: Parser [Term]
+pTerms = do
+    e <- expr
+    do
+        spaces >> char ',' >> spaces
+        ts <- pTerms
+        return (e:ts)
+        <|> return [e]
 
 factor :: Parser Term
 factor = do

@@ -225,9 +225,6 @@ flexrigid _F xm t th = do
         lxt <- makeAbs xm t
         proj (map term2ID xm) ((_F, lxt):th) t
 
--- ExceptT String LFreshM Theta
---   Left (String)
---   Right (LFreshM Theta)
 unif :: Term -> Term -> ExceptT String (LFreshMT IO) Theta
 unif s t =
     let s' = v2f s
