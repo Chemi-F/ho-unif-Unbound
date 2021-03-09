@@ -51,8 +51,10 @@ term2ID :: Term -> ID
 term2ID (B s) = s
 
 strip :: Term -> (Term, [Term])
-strip (App t ts) = (t, ts)
-strip t = (t, [])
+strip t = strip' (t, [])
+    where
+        strip' (App s ts, ts') = strip' (s, ts ++ ts')
+        strip' p = p
 
 -- make Lxs. t
 makeAbs :: [Term] -> Term -> Term
