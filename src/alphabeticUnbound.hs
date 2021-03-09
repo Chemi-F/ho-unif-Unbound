@@ -290,8 +290,8 @@ unifP s1 s2 =
 -- Print
 
 prTerm :: LFresh m => Term -> m String
-prTerm (F x) = return $ "#" ++ show x
-prTerm (V x) = return $ show x
+prTerm (F x) = return $ show x
+prTerm (V x) = return $ "#" ++ show x
 prTerm (C x) = return $ "_" ++ x
 prTerm (App t []) = prTerm t
 prTerm (App t ts) = do
