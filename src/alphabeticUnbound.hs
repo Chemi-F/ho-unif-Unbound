@@ -90,8 +90,10 @@ term2ID :: Term -> ID
 term2ID (V id) = id
 
 strip :: Term -> (Term, [Term])
-strip (App t ts) = (t, ts)
-strip t = (t, [])
+strip t = strip' (t, [])
+    where
+        strip' (App s ts, ts') = strip' (s, ts ++ ts')
+        strip' p = p
 
 -- make Lxs. t
 makeAbs :: LFresh m => [Term] -> Term -> m Term
@@ -419,3 +421,18 @@ pString = do
     where
         firstChar = satisfy (\a -> isLetter a)
         nonFirstChar = satisfy (\a -> isDigit a || isLetter a)
+
+
+-- first-order
+-- x + (s(y) + y) =? s(z) + z
+example1 = unifP "_Add(x,_Add(_s(y),y))" "_Add(_s(z),z)"
+
+-- x + (0 + y) =? s(z) + (0 + x)
+example2 = unifP "_Add(x,_Add(_Zero,y))" "_Add(_s(z),_Add(_Zero,x))"
+
+-- f(g(x, y), x, y) =? f(z, g(y, y), y)
+example3 = unifP "_f(_g(x, y), x, y)" "_f(z, _g(y, y), y)"
+
+-- higher-order
+-- λx,y.F(x) =? λx,y.c(G(y, x))
+example4 = unifP "Lx,y.F(x)" "Lx,y._c(G(y, x))" 
