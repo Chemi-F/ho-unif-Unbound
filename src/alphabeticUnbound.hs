@@ -146,9 +146,14 @@ devar th t =
 -- (*** Unification ***)
 
 -- 返り値の型 ExceptT String (LFreshM IO) Theta で、IO はデバッグ用
--- do から liftIO $ putStrLn までは関数の動作には影響がない部分
--- 本来の型は ExceptT String LFreshM Theta で十分
+-- liftIO $ putStrLn までは関数の動作には影響がない部分
+-- 本来の型は ExceptT String LFreshM Theta
 -- このことは、同じ型の形をしている関数にも言える
+
+-- ExceptT String LFreshM Theta に関数を書き換えるときは、
+-- prth <- prTheta th から liftIO $ putStrLn までの行を消すほか、
+-- unifP、prUnif 関数を書き換える必要がある。
+-- 書き換え方は該当関数個所を参照
 
 -- projection
 proj :: [ID] -> Theta -> Term -> ExceptT String (LFreshMT IO) Theta
@@ -293,6 +298,11 @@ unifP s1 s2 =
                 Right t2 -> do
                     str <- prUnif t1 t2
                     putStrLn str
+-- proj などの関数で返り値の型を ExceptT String LFreshM Theta にする際は、
+-- Right t2 ->
+--     let str = prUnif t1 t2
+--     in putStrLn str
+-- とする。
 
 
 -- Print
@@ -340,7 +350,10 @@ prTheta t = do { str <- prTheta' t; return $ "{" ++ str }
             ss' <- prTheta' ss
             return $ show id ++ " -> " ++ t' ++ ", " ++ ss'
 
--- prUnif :: Term -> Term -> String
+-- proj などの関数で返り値の型を ExceptT String LFreshM Theta にする際は、
+-- prUnif :: Term -> Term -> String とし、
+-- runLFreshMT $ do を、runLFreshM $ do に変える。
+prUnif :: Term -> Term -> IO String
 prUnif t1 t2 = runLFreshMT $ do
     th <- runExceptT $ unif t1 t2
     case th of
